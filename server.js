@@ -7,14 +7,28 @@ const sendOtp = require("./utils/sendOTP.js");
 const cookieParser = require("cookie-parser");
 const rateLimit = require("express-rate-limit");
 const sendInviteLink = require("./sendInviteLink.js");
-const { verifyUser } = require("./middleware/verifyUser.js");
+const verifyUser = require("./middleware/verifyUser.js");
+const generateToken = require("./utils/generateToken.js");
 const app = express();
 const port = 4000;
 
 app.use(express.json());
-app.use(cors());
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+  })
+);
 app.use(cookieParser());
 app.set("trust proxy", 1);
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: true,
+  sameSite: "none",
+  maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days expiration
+};
 
 const limiter = rateLimit({
   windowMs: 60 * 5000, // 5 minute
@@ -24,10 +38,10 @@ const limiter = rateLimit({
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 
-async function server(client, otp) {
-  // Apply rate limiter to specific route
-  app.use("/auth/otpSend", limiter);
+// Apply rate limiter to specific route
+app.use("/auth/otpSend", limiter);
 
+async function server(client, otp) {
   app.get("/auth/otpSend/:num", async (req, res) => {
     const number = req.params.num;
 
@@ -57,43 +71,59 @@ async function server(client, otp) {
     }
   });
 
+  // Login Endpoint
   app.get("/auth/login/:num", async (req, res) => {
-    const number = req.params.num;
+    const phoneNumber = req.params.num;
     const otpCode = req.query.otp;
 
-    try {
-      if (!number || !otpCode) {
-        return res.status(400).json({
-          error:
-            "Phone number and otp is required (localhost:3000/auth/check/0543211234?otp=123456)",
-        });
-      }
-      const result = otp.check(otpCode, number);
-      if (result) {
-        const x = await db.getUserDetailsByPhoneNumber(number);
-        if (!x)
-          return res.status(220).json({
-            error: "this user is not in the database and need to sign up.",
-          });
-        res.status(200).json(x);
-      } else {
-        res.status(420).json({ error: "wrong otp!" });
-      }
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
+    const user = {
+      phoneNumber,
+      role: "regular",
+    };
+
+    const userToken = generateToken(user);
+    res.cookie("user-token", userToken, cookieOptions);
+    res.send("Done!");
+
+    // try {
+    //   if (!phoneNumber || !otpCode) {
+    //     return res.status(400).json({
+    //       error:
+    //         "Phone number and otp is required (localhost:3000/auth/check/0543211234?otp=123456)",
+    //     });
+    //   }
+    //   // const result = otp.check(otpCode, phoneNumber);
+    //   // if (result) {
+    //   //   // const x = await db.getUserDetailsByPhoneNumber(phoneNumber);
+    //   //   if (!x)
+    //   //     return res.status(220).json({
+    //   //       error: "this user is not in the database and need to sign up.",
+    //   //     });
+
+    //   //   res.status(200).json(x);
+    //   // } else {
+    //   //   res.status(420).json({ error: "wrong otp!" });
+    //   // }
+    // } catch (error) {
+    //   res.status(500).json({ error: error.message });
+    // }
   });
 
-  app.get("/userBusId", async (req, res) => {
+  app.get("/userBusId", verifyUser, async (req, res) => {
     const { phoneNumber, otpCode } = req.query;
-    const result = otp.check(otpCode, phoneNumber);
-    if (result) {
-      const id = await db.getUserBusId(phoneNumber);
-      if (id == null) return res.send("null");
-      res.send(id);
-    } else {
-      res.status(420).json({ error: "wrong otp!" });
-    }
+    const userData = req.user;
+    console.log("arrived");
+    console.log(userData.role);
+    console.log("arrived");
+
+    // const result = otp.check(otpCode, phoneNumber);
+    // if (result) {
+    //   const id = await db.getUserBusId(phoneNumber);
+    //   if (id == null) return res.send("null");
+    //   res.send(id);
+    // } else {
+    //   res.status(420).json({ error: "wrong otp!" });
+    // }
   });
 
   // app.get('/auth/otpCheck', (req, res) => {
@@ -143,6 +173,8 @@ async function server(client, otp) {
 
   //     }
   // });
+
+  //  Sign-Up Endpoint
   app.post("/userDetails", async (req, res) => {
     const { phoneNumber, otpCode, firstName, familyName, yearOfBirth, town } =
       req.body; // All data will be available in req.body
@@ -161,29 +193,22 @@ async function server(client, otp) {
     }
 
     // Check OTP
-    const result = otp.check(otpCode, phoneNumber);
+    // const result = otp.check(otpCode, phoneNumber);
 
-    if (result) {
-      await db.addUserDetails(phoneNumber, req.body);
-      const user = {
-        phoneNumber,
-        role: "regular",
-      };
+    // if (result) {
+    //   await db.addUserDetails(phoneNumber, req.body);
+    //   const user = {
+    //     phoneNumber,
+    //     role: "regular",
+    //   };
 
-      const userToken = jwt.sign(user, process.env.JWT_SECRET_KEY);
-      console.log(userToken);
+    // const userToken = generateToken(user);
+    // res.cookie("user-token", userToken, cookieOptions);
 
-      res.cookie("user-token", userToken, {
-        httpOnly: true, // Prevents JavaScript access (XSS protection)
-        secure: process.env.NODE_ENV === "production", // HTTPS only in production
-        sameSite: "strict", // CSRF protection
-        maxAge: 60 * 60 * 10000, // 10 hour expiration
-      });
-
-      return res.status(200).send("success");
-    } else {
-      return res.status(400).send("Wrong OTP!");
-    }
+    //   return res.status(200).send("success");
+    // } else {
+    //   return res.status(400).send("Wrong OTP!");
+    // }
   });
 
   app.get("/buses", async (req, res) => {
@@ -252,6 +277,15 @@ async function server(client, otp) {
   //     }
 
   // });
+
+  app.get("/logout", (req, res) => {
+    res.clearCookie("user-token", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "none",
+    });
+    res.send("Logged out Successfully!");
+  });
 
   app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
