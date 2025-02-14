@@ -1,17 +1,17 @@
-export const verifyUser = (req, res, next) => {
-  const token = req.header("Authorization");
-  if (!token) {
-    return res
-      .status(401)
-      .json({ message: "Access denied. No token provided." });
-  }
+const verifyToken = require("../utils/verifyToken");
 
+const verifyUser = (req, res, next) => {
+  const userToken = req.cookies["user-token"];
+  if (!userToken) {
+    res.status(401).json("Access denied. No token provided.");
+  }
   try {
-    const user = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = user;
-  } catch (e) {
-    return res.status(400).json({ message: "Invalid token." });
+    const userData = verifyToken(userToken);
+    req.user = userData;
+    next();
+  } catch (error) {
+    res.status(403).json("Access Denied. Unauthorized");
   }
-
-  next();
 };
+
+module.exports = verifyUser;
