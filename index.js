@@ -7,8 +7,10 @@ const start = async (ran) => {
     const otp = new OTP();
     const client = await Client();
     const server = await Server(client, otp);
+    // const server = await Server(otp);
 
     ran(client, otp);
+    // ran(otp);
   } catch (error) {
     console.error("Error initializing modules:", error);
   }
